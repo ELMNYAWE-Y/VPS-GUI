@@ -1,0 +1,105 @@
+name: VPS with GUI
+on:
+  workflow_dispatch:
+jobs:
+  secure-vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Install & Configure SSH
+        run: |
+          sudo apt update -y
+          sudo apt install -y openssh-server
+          sudo systemctl enable ssh
+          sudo systemctl start ssh
+          echo "root:admin@123" | sudo chpasswd
+          echo "PermitRootLogin yes" | sudo tee -a /etc/ssh/sshd_config
+          
+          # تغيير اسم الخادم
+          sudo hostnamectl set-hostname ELMINYAWE
+          echo "127.0.0.1 ELMINYAWE" | sudo tee -a /etc/hosts
+
+          # إضافة شعار ASCII إلى ملف الترحيب
+          sudo tee /etc/motd > /dev/null << EOF
+          ███████╗██╗     ███╗   ███╗██╗███╗   ██╗██╗   ██╗ █████╗ ██╗    ██╗███████╗
+          ██╔════╝██║     ████╗ ████║██║████╗  ██║╚██╗ ██╔╝██╔══██╗██║    ██║██╔════╝
+          █████╗  ██║     ██╔████╔██║██║██╔██╗ ██║ ╚████╔╝ ███████║██║ █╗ ██║█████╗  
+          ██╔══╝  ██║     ██║╚██╔╝██║██║██║╚██╗██║  ╚██╔╝  ██╔══██║██║███╗██║██╔══╝  
+          ███████╗███████╗██║ ╚═╝ ██║██║██║ ╚████║   ██║   ██║  ██║╚███╔███╔╝███████╗
+          ╚══════╝╚══════╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝
+          EOF
+
+          sudo service ssh restart
+          echo "✅ SSH user: root | pass: admin@123 | Hostname: ELMINYAWE"
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=elminyawe-vps-${{ github.run_id }}
+          tsIP=$(tailscale ip -4 | head -n 1)
+          echo "TAILSCALE_IP=$tsIP" >> $GITHUB_ENV
+          echo "✅ Tailscale IP: $tsIP"
+
+      - name: Install Graphical Desktop and VNC
+        run: |
+          # تثبيت الواجهة الرسومية و VNC
+          sudo apt update -y
+          sudo apt install -y xfce4 xfce4-goodies tightvncserver firefox
+
+          # إعداد VNC
+          mkdir -p ~/.vnc
+          echo -e "admin@123\nadmin@123\nn" | vncpasswd
+          sudo tee ~/.vnc/xstartup > /dev/null << EOF
+          #!/bin/bash
+          xrdb $HOME/.Xresources
+          startxfce4 &
+          EOF
+
+          chmod +x ~/.vnc/xstartup
+
+          # تشغيل VNC على منفذ 5901
+          vncserver :1 -geometry 1280x720 -depth 24
+
+          # إنشاء خدمة دائمة لـ VNC
+          sudo tee /etc/systemd/system/vncserver@.service > /dev/null << EOF
+          [Unit]
+          Description=Remote Desktop Service (VNC)
+          After=syslog.target network.target
+
+          [Service]
+          Type=simple
+          User=root
+          PAMName=login
+          WorkingDirectory=/root
+          ExecStartPre=/bin/sh -c '/usr/bin/vncserver -kill :%i > /dev/null 2>&1 || :'
+          ExecStart=/usr/bin/vncserver -localhost no -geometry 1280x720 -depth 24 :%i
+          ExecStop=/usr/bin/vncserver -kill :%i
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          sudo systemctl daemon-reload
+          sudo systemctl enable vncserver@1.service
+          sudo systemctl start vncserver@1.service
+
+          echo "✅ VNC installed and configured"
+          echo "VNC Password: admin@123"
+          echo "Connect using: $TAILSCALE_IP:5901"
+
+      - name: Verify Services
+        run: |
+          echo "Tailscale VPS with GUI ready!"
+          echo "IP: $TAILSCALE_IP"
+          echo "User: root"
+          echo "Pass: admin@123"
+          echo "Hostname: ELMINYAWE"
+          echo "VNC Connection: $TAILSCALE_IP:5901"
+          echo "VNC Password: admin@123"
+
+      - name: Keep VPS Alive
+        run: |
+          while true; do
+            echo "[$(date)] VPS running with GUI..."
+            sleep 300
+          done
